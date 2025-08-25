@@ -1,10 +1,13 @@
 package mr
 
 import (
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	"io"
 	"log"
 	"net/rpc"
+	"os"
 )
 
 // Map functions return a slice of KeyValue.
@@ -26,17 +29,72 @@ func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	// Your worker implementation here.
-
-	GetATask()
+	reply := CoordinatorReply{}
+	GetATask(&reply)
+	switch reply.TaskType {
+	case MapTask:
+		handleMapTask(mapf, &reply)
+	}
 	// uncomment to send the Example RPC to the coordinator.
 	// CallExample()
 }
 
-func GetATask() {
+func handleMapTask(mapf func(string, string) []KeyValue, reply *CoordinatorReply) {
+	fileName := reply.InputFile
+	file, err := os.Open(fileName)
+	if err != nil {
+		fmt.Println("cannot open file %v", fileName)
+		log.Fatalf("cannot open %v", fileName)
+	}
+	content, err := io.ReadAll(file)
+	if err != nil {
+		log.Fatalf("cannot read %v", fileName)
+	}
+	file.Close()
+	kva := mapf(fileName, string(content))
+	writeIntermediate(reply.WorkId, reply.NReduce, kva)
+}
+
+func writeIntermediate(mapID int, nReduce int, kvs []KeyValue) error {
+	// Open one file and encoder per reduce bucket
+	files := make([]*os.File, nReduce)
+	encs := make([]*json.Encoder, nReduce)
+
+	// create tp files then atomatically rename at the end
+	for i := 0; i < nReduce; i++ {
+		name := fmt.Sprintf("mr-%d-%d", mapID, i)
+		f, err := os.Create(name)
+		if err != nil {
+			return fmt.Errorf("Create %s: %w", name, err)
+		}
+		files[i] = f
+		encs[i] = json.NewEncoder(f)
+	}
+
+	// ensure files get closed
+	defer func() {
+		for _, f := range files {
+			if f != nil {
+				_ = f.Close()
+			}
+		}
+	}()
+
+	// Dispatch each kv to its bucket and encode as a JSON line
+	for _, kv := range kvs {
+		r := ihash(kv.Key) % nReduce
+		if err := encs[r].Encode(&kv); err != nil {
+			return fmt.Errorf("Encode kv to bucket %d: %w", r, err)
+		}
+	}
+	return nil
+}
+
+func GetATask(reply *CoordinatorReply) {
 	args := WorkerArgs{}
 	args.TaskStatus = AskANewTask
-	reply := CoordinatorReply{}
-	status := call("Coordinator.AssignTask", &args, &reply)
+
+	status := call("Coordinator.AssignTask", &args, reply)
 
 	if status {
 		fmt.Println("Get reply:", reply.NReduce)

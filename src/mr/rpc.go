@@ -40,6 +40,7 @@ const (
 	Success TaskStatus = iota // 0
 	Fail
 	AskANewTask
+	Todo
 )
 
 type WorkerArgs struct {
@@ -51,6 +52,7 @@ type CoordinatorReply struct {
 	TaskType  TaskTypeT
 	InputFile string
 	NReduce   int
+	WorkId    int
 }
 
 // Cook up a unique-ish UNIX-domain socket name

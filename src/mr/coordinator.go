@@ -8,9 +8,18 @@ import (
 	"os"
 )
 
+type mapTask struct {
+	taskID   int
+	fileName string
+	status   TaskStatus
+}
+
 type Coordinator struct {
 	// Your definitions here.
-	nReduce int
+	nReduce      int
+	mapTasks     []mapTask
+	inputfiles   []string
+	mapTasksDone bool
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -24,6 +33,15 @@ func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 }
 
 func (c *Coordinator) AssignTask(args *WorkerArgs, reply *CoordinatorReply) error {
+	if !c.mapTasksDone {
+		for i := range len(c.mapTasks) {
+			if c.mapTasks[i].status != Success {
+				reply.InputFile = c.mapTasks[i].fileName
+				reply.WorkId = i
+				break
+			}
+		}
+	}
 	reply.TaskType = MapTask
 	reply.NReduce = c.nReduce
 	return nil
@@ -57,11 +75,23 @@ func (c *Coordinator) Done() bool {
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	c := Coordinator{}
+	fileN := len(files)
+	c := Coordinator{
+		inputfiles: files,
+		mapTasks:   make([]mapTask, fileN),
+		nReduce:    nReduce,
+	}
 
 	// Your code here.
 
+	for i := range fileN {
+		c.mapTasks[i] = mapTask{
+			taskID:   i,
+			fileName: files[i],
+			status:   Todo,
+		}
+	}
 	c.server()
-	c.nReduce = nReduce
+
 	return &c
 }
