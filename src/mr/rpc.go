@@ -45,7 +45,8 @@ const (
 
 type WorkerArgs struct {
 	TaskStatus TaskStatus
-	FileName   string
+	WorkID     int
+	TaskType   TaskTypeT
 }
 
 type CoordinatorReply struct {

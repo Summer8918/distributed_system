@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/rpc"
 	"os"
+	"sync"
 )
 
 type mapTask struct {
@@ -16,10 +17,12 @@ type mapTask struct {
 
 type Coordinator struct {
 	// Your definitions here.
-	nReduce      int
-	mapTasks     []mapTask
-	inputfiles   []string
-	mapTasksDone bool
+	nReduce        int
+	mapTasks       []mapTask
+	inputfiles     []string
+	mapTasksDone   bool
+	mutex          sync.Mutex
+	mapTaskDoneNum int
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -38,12 +41,26 @@ func (c *Coordinator) AssignTask(args *WorkerArgs, reply *CoordinatorReply) erro
 			if c.mapTasks[i].status != Success {
 				reply.InputFile = c.mapTasks[i].fileName
 				reply.WorkId = i
+				reply.TaskType = MapTask
+				reply.NReduce = c.nReduce
 				break
 			}
 		}
 	}
-	reply.TaskType = MapTask
-	reply.NReduce = c.nReduce
+
+	return nil
+}
+
+func (c *Coordinator) NotifyComplete(args *WorkerArgs, reply *CoordinatorReply) error {
+	if args.TaskType == MapTask {
+		c.mutex.Lock()
+		defer c.mutex.Unlock()
+		workID := args.WorkID
+		if workID >= len(c.mapTasks) {
+			log.Fatalf("workID >= len(c.mapTasks)")
+		}
+		c.mapTasks[workID].status = Success
+	}
 	return nil
 }
 

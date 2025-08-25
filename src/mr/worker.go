@@ -43,7 +43,6 @@ func handleMapTask(mapf func(string, string) []KeyValue, reply *CoordinatorReply
 	fileName := reply.InputFile
 	file, err := os.Open(fileName)
 	if err != nil {
-		fmt.Println("cannot open file %v", fileName)
 		log.Fatalf("cannot open %v", fileName)
 	}
 	content, err := io.ReadAll(file)
@@ -53,6 +52,7 @@ func handleMapTask(mapf func(string, string) []KeyValue, reply *CoordinatorReply
 	file.Close()
 	kva := mapf(fileName, string(content))
 	writeIntermediate(reply.WorkId, reply.NReduce, kva)
+	NotifyComplete(reply)
 }
 
 func writeIntermediate(mapID int, nReduce int, kvs []KeyValue) error {
@@ -65,7 +65,7 @@ func writeIntermediate(mapID int, nReduce int, kvs []KeyValue) error {
 		name := fmt.Sprintf("mr-%d-%d", mapID, i)
 		f, err := os.Create(name)
 		if err != nil {
-			return fmt.Errorf("Create %s: %w", name, err)
+			return fmt.Errorf("create %s: %w", name, err)
 		}
 		files[i] = f
 		encs[i] = json.NewEncoder(f)
@@ -84,7 +84,7 @@ func writeIntermediate(mapID int, nReduce int, kvs []KeyValue) error {
 	for _, kv := range kvs {
 		r := ihash(kv.Key) % nReduce
 		if err := encs[r].Encode(&kv); err != nil {
-			return fmt.Errorf("Encode kv to bucket %d: %w", r, err)
+			return fmt.Errorf("encode kv to bucket %d: %w", r, err)
 		}
 	}
 	return nil
@@ -97,9 +97,24 @@ func GetATask(reply *CoordinatorReply) {
 	status := call("Coordinator.AssignTask", &args, reply)
 
 	if status {
-		fmt.Println("Get reply:", reply.NReduce)
+		fmt.Println("GetATask reply success:", reply.NReduce)
 	} else {
 		fmt.Println("call Coordinator.AssignTask failed")
+	}
+}
+
+func NotifyComplete(reply *CoordinatorReply) {
+	args := WorkerArgs{
+		WorkID:     reply.WorkId,
+		TaskStatus: Success,
+		TaskType:   reply.TaskType,
+	}
+
+	status := call("Coordinator.NotifyComplete", &args, reply)
+	if status {
+		fmt.Println("NotifyComplete reply success:", reply.NReduce)
+	} else {
+		fmt.Println("call Coordinator.NotifyComplete failed")
 	}
 }
 
