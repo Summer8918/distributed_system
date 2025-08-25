@@ -31,16 +31,23 @@ func Worker(mapf func(string, string) []KeyValue,
 	// Your worker implementation here.
 	reply := CoordinatorReply{}
 	GetATask(&reply)
-	switch reply.TaskType {
-	case MapTask:
-		handleMapTask(mapf, &reply)
+	for {
+		switch reply.TaskType {
+		case MapTask:
+			handleMapTask(mapf, &reply)
+		case ReduceTask:
+			fmt.Println("Todo: run reduce task workID %v", reply.WorkId)
+		}
 	}
 	// uncomment to send the Example RPC to the coordinator.
 	// CallExample()
 }
 
 func handleMapTask(mapf func(string, string) []KeyValue, reply *CoordinatorReply) {
-	fileName := reply.InputFile
+	if len(reply.InputFiles) != 1 {
+		log.Fatalf("len(reply.InputFiles) != 1")
+	}
+	fileName := reply.InputFiles[0]
 	file, err := os.Open(fileName)
 	if err != nil {
 		log.Fatalf("cannot open %v", fileName)

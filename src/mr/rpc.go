@@ -31,7 +31,8 @@ type TaskTypeT int
 const (
 	MapTask    TaskTypeT = iota // 0
 	ReduceTask                  // 1
-	ExitTask                    // 2
+	Exit                        // 2
+	Wait                        // 3
 )
 
 type TaskStatus int
@@ -41,6 +42,7 @@ const (
 	Fail
 	AskANewTask
 	Todo
+	Assigned
 )
 
 type WorkerArgs struct {
@@ -50,10 +52,10 @@ type WorkerArgs struct {
 }
 
 type CoordinatorReply struct {
-	TaskType  TaskTypeT
-	InputFile string
-	NReduce   int
-	WorkId    int
+	TaskType   TaskTypeT
+	InputFiles []string
+	NReduce    int
+	WorkId     int
 }
 
 // Cook up a unique-ish UNIX-domain socket name
