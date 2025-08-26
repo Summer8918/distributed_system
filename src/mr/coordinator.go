@@ -60,36 +60,41 @@ func (c *Coordinator) AssignTask(args *WorkerArgs, reply *CoordinatorReply) erro
 				reply.InputFiles = append(reply.InputFiles, c.mapTasks[i].fileName)
 				reply.TaskType = MapTask
 				c.mapTasks[i].status = Assigned
+				// fmt.Println("Assign a map task, workId: %v", reply.WorkId)
 				c.mapTasks[i].timeStamp = time.Now()
 				return nil
 			}
 		}
-	} else if !c.reduceTasksDone {
+	}
+	if !c.reduceTasksDone {
 		for i := range len(c.reduceTasks) {
 			if c.reduceTasks[i].status == Todo || (c.reduceTasks[i].status == Assigned && time.Since(c.reduceTasks[i].timeStamp) > 10*time.Second) {
 				reply.InputFiles = c.reduceTasks[i].files
-				reply.WorkId = i
 				reply.TaskType = ReduceTask
 				c.reduceTasks[i].status = Assigned
 				c.reduceTasks[i].timeStamp = time.Now()
+				reply.WorkId = c.reduceTasks[i].taskID
+				// fmt.Println("Assign a reduce task, workId: %v", reply.WorkId)
 				return nil
 			}
 		}
 	}
 	if !c.reduceTasksDone || !c.mapTasksDone {
 		reply.TaskType = Wait
+		// fmt.Println("Assign a wait task")
 		return nil
 	} else {
 		reply.TaskType = Exit
+		// fmt.Println("Assign a exit task")
 	}
 	return nil
 }
 
 func (c *Coordinator) NotifyComplete(args *WorkerArgs, reply *CoordinatorReply) error {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
 	switch args.TaskType {
 	case MapTask:
-		c.mutex.Lock()
-		defer c.mutex.Unlock()
 		workID := args.WorkID
 		if workID >= len(c.mapTasks) {
 			log.Fatalf("workID >= len(c.mapTasks)")
@@ -100,10 +105,9 @@ func (c *Coordinator) NotifyComplete(args *WorkerArgs, reply *CoordinatorReply) 
 			c.mapTasksDone = true
 		}
 	case ReduceTask:
-		c.mutex.Lock()
-		defer c.mutex.Unlock()
 		c.reduceTaskDoneNum += 1
 		if c.reduceTaskDoneNum == c.nReduce {
+			c.reduceTasksDone = true
 			c.allDone = true
 		}
 	}
@@ -127,11 +131,12 @@ func (c *Coordinator) server() {
 // main/mrcoordinator.go calls Done() periodically to find out
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
-	ret := false
+	// ret := false
 
 	// Your code here.
-
-	return ret
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	return c.mapTasksDone
 }
 
 // create a Coordinator.

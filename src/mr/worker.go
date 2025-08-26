@@ -8,6 +8,8 @@ import (
 	"log"
 	"net/rpc"
 	"os"
+	"sort"
+	"time"
 )
 
 // Map functions return a slice of KeyValue.
@@ -29,18 +31,80 @@ func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	// Your worker implementation here.
-	reply := CoordinatorReply{}
-	GetATask(&reply)
+
 	for {
+		reply := CoordinatorReply{}
+		GetATask(&reply)
+		// fmt.Println("reply.TaskType: %v reply.WorkId %v", reply.TaskType, reply.WorkId)
 		switch reply.TaskType {
 		case MapTask:
 			handleMapTask(mapf, &reply)
 		case ReduceTask:
-			fmt.Println("Todo: run reduce task workID %v", reply.WorkId)
+			// fmt.Println("Get reduce work id %v", reply.WorkId)
+			handleReduceTask(reducef, &reply)
+		case Exit:
+			os.Exit(0)
+		case Wait:
+			time.Sleep(1 * time.Second)
 		}
 	}
 	// uncomment to send the Example RPC to the coordinator.
 	// CallExample()
+}
+
+func handleReduceTask(reducef func(string, []string) string, reply *CoordinatorReply) {
+	// Load intermediate files
+	intermediate := []KeyValue{}
+	// fmt.Println(reply.InputFiles)
+	for m := 0; m < len(reply.InputFiles); m++ {
+		file, err := os.Open(reply.InputFiles[m])
+
+		if err != nil {
+			log.Fatalf("fail to open file %v", reply.InputFiles[m])
+		}
+
+		dec := json.NewDecoder(file)
+		for {
+			var kv KeyValue
+			if err := dec.Decode(&kv); err != nil {
+				break
+			}
+
+			intermediate = append(intermediate, kv)
+		}
+
+		file.Close()
+	}
+
+	// Sort intermediate kvs by key
+	sort.Slice(intermediate, func(i, j int) bool {
+		return intermediate[i].Key < intermediate[j].Key
+	})
+
+	// Create output file
+	outFileName := fmt.Sprintf("mr-out-%d", reply.WorkId)
+	outFile, _ := os.CreateTemp("", outFileName)
+
+	// Apply reduce function
+	i := 0
+	for i < len(intermediate) {
+		j := i + 1
+		vals := []string{}
+		vals = append(vals, intermediate[i].Value)
+		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+			vals = append(vals, intermediate[j].Value)
+			j++
+		}
+		output := reducef(intermediate[i].Key, vals)
+		fmt.Fprintf(outFile, "%v %v\n", intermediate[i].Key, output)
+		i = j
+	}
+
+	outFile.Close()
+	os.Rename(outFile.Name(), outFileName)
+
+	// Update reduce task status
+	NotifyComplete(reply)
 }
 
 func handleMapTask(mapf func(string, string) []KeyValue, reply *CoordinatorReply) {
@@ -103,9 +167,7 @@ func GetATask(reply *CoordinatorReply) {
 
 	status := call("Coordinator.AssignTask", &args, reply)
 
-	if status {
-		fmt.Println("GetATask reply success:", reply.NReduce)
-	} else {
+	if !status {
 		fmt.Println("call Coordinator.AssignTask failed")
 	}
 }
@@ -118,9 +180,7 @@ func NotifyComplete(reply *CoordinatorReply) {
 	}
 
 	status := call("Coordinator.NotifyComplete", &args, reply)
-	if status {
-		fmt.Println("NotifyComplete reply success:", reply.NReduce)
-	} else {
+	if !status {
 		fmt.Println("call Coordinator.NotifyComplete failed")
 	}
 }
