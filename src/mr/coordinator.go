@@ -66,18 +66,21 @@ func (c *Coordinator) AssignTask(args *WorkerArgs, reply *CoordinatorReply) erro
 			}
 		}
 	}
-	if !c.reduceTasksDone {
+	if c.mapTasksDone && !c.reduceTasksDone {
 		for i := range len(c.reduceTasks) {
 			if c.reduceTasks[i].status == Todo || (c.reduceTasks[i].status == Assigned && time.Since(c.reduceTasks[i].timeStamp) > 10*time.Second) {
 				reply.InputFiles = c.reduceTasks[i].files
 				reply.TaskType = ReduceTask
 				c.reduceTasks[i].status = Assigned
-				c.reduceTasks[i].timeStamp = time.Now()
 				reply.WorkId = c.reduceTasks[i].taskID
+				c.reduceTasks[i].timeStamp = time.Now()
 				// fmt.Println("Assign a reduce task, workId: %v", reply.WorkId)
 				return nil
 			}
 		}
+		reply.TaskType = Wait
+		// fmt.Println("Assign a wait task")
+		return nil
 	}
 	if !c.reduceTasksDone || !c.mapTasksDone {
 		reply.TaskType = Wait
@@ -93,9 +96,9 @@ func (c *Coordinator) AssignTask(args *WorkerArgs, reply *CoordinatorReply) erro
 func (c *Coordinator) NotifyComplete(args *WorkerArgs, reply *CoordinatorReply) error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
+	workID := args.WorkID
 	switch args.TaskType {
 	case MapTask:
-		workID := args.WorkID
 		if workID >= len(c.mapTasks) {
 			log.Fatalf("workID >= len(c.mapTasks)")
 		}
@@ -105,6 +108,10 @@ func (c *Coordinator) NotifyComplete(args *WorkerArgs, reply *CoordinatorReply) 
 			c.mapTasksDone = true
 		}
 	case ReduceTask:
+		if workID >= len(c.reduceTasks) {
+			log.Fatalf("workID >= len(c.reduceTasks)")
+		}
+		c.reduceTasks[workID].status = Success
 		c.reduceTaskDoneNum += 1
 		if c.reduceTaskDoneNum == c.nReduce {
 			c.reduceTasksDone = true
