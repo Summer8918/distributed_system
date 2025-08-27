@@ -43,7 +43,7 @@ func Worker(mapf func(string, string) []KeyValue,
 			// fmt.Println("Get reduce work id %v", reply.WorkId)
 			handleReduceTask(reducef, &reply)
 		case Exit:
-			fmt.Println("Worker exit 1")
+			// fmt.Println("Worker exit 1")
 			os.Exit(0)
 		case Wait:
 			time.Sleep(1 * time.Second)
@@ -178,6 +178,7 @@ func NotifyComplete(reply *CoordinatorReply) {
 		TaskType:   reply.TaskType,
 	}
 
+	// fmt.Println("NotifyComplete ", reply.WorkId, " ", reply.TaskType)
 	status := call("Coordinator.NotifyComplete", &args, reply)
 	if !status {
 		fmt.Println("call Coordinator.NotifyComplete failed")

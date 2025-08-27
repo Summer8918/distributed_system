@@ -77,7 +77,7 @@ func (c *Coordinator) AssignTask(args *WorkerArgs, reply *CoordinatorReply) erro
 				reply.InputFiles = c.reduceTasks[i].files
 				reply.TaskType = ReduceTask
 				c.reduceTasks[i].status = Assigned
-				reply.WorkId = c.reduceTasks[i].taskID
+				reply.WorkId = i
 				c.reduceTasks[i].timeStamp = time.Now()
 				// fmt.Println("Assign a reduce task, workId: %v", reply.WorkId)
 				return nil
@@ -90,7 +90,7 @@ func (c *Coordinator) AssignTask(args *WorkerArgs, reply *CoordinatorReply) erro
 
 	if c.allDone {
 		reply.TaskType = Exit
-		fmt.Println("Assign a exit task")
+		// fmt.Println("Assign a exit task")
 	} else {
 		reply.TaskType = Wait
 		// fmt.Println("Assign a wait task")
@@ -153,7 +153,7 @@ func (c *Coordinator) Done() bool {
 	// Your code here.
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
-	return c.mapTasksDone
+	return c.allDone
 }
 
 // create a Coordinator.

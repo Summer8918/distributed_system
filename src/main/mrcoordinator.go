@@ -27,6 +27,6 @@ func main() {
 	for m.Done() == false {
 		time.Sleep(time.Second)
 	}
-	fmt.Println("Coordinator exit")
+	// fmt.Println("Coordinator exit")
 	time.Sleep(time.Second)
 }
