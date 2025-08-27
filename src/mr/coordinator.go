@@ -54,7 +54,7 @@ func (c *Coordinator) AssignTask(args *WorkerArgs, reply *CoordinatorReply) erro
 	defer c.mutex.Unlock()
 	reply.NReduce = c.nReduce
 	if !c.mapTasksDone {
-		for i := range len(c.mapTasks) {
+		for i := 0; i < len(c.mapTasks); i++ {
 			if c.mapTasks[i].status == Todo || (c.mapTasks[i].status == Assigned && time.Since(c.mapTasks[i].timeStamp) > 10*time.Second) {
 				reply.WorkId = i
 				reply.InputFiles = append(reply.InputFiles, c.mapTasks[i].fileName)
@@ -65,9 +65,14 @@ func (c *Coordinator) AssignTask(args *WorkerArgs, reply *CoordinatorReply) erro
 				return nil
 			}
 		}
+
+		reply.TaskType = Wait
+		// fmt.Println("Assign a wait task")
+		return nil
 	}
-	if c.mapTasksDone && !c.reduceTasksDone {
-		for i := range len(c.reduceTasks) {
+
+	if !c.reduceTasksDone {
+		for i := 0; i < len(c.reduceTasks); i++ {
 			if c.reduceTasks[i].status == Todo || (c.reduceTasks[i].status == Assigned && time.Since(c.reduceTasks[i].timeStamp) > 10*time.Second) {
 				reply.InputFiles = c.reduceTasks[i].files
 				reply.TaskType = ReduceTask
@@ -82,13 +87,14 @@ func (c *Coordinator) AssignTask(args *WorkerArgs, reply *CoordinatorReply) erro
 		// fmt.Println("Assign a wait task")
 		return nil
 	}
-	if !c.reduceTasksDone || !c.mapTasksDone {
+
+	if c.allDone {
+		reply.TaskType = Exit
+		fmt.Println("Assign a exit task")
+	} else {
 		reply.TaskType = Wait
 		// fmt.Println("Assign a wait task")
 		return nil
-	} else {
-		reply.TaskType = Exit
-		// fmt.Println("Assign a exit task")
 	}
 	return nil
 }
@@ -102,8 +108,10 @@ func (c *Coordinator) NotifyComplete(args *WorkerArgs, reply *CoordinatorReply) 
 		if workID >= len(c.mapTasks) {
 			log.Fatalf("workID >= len(c.mapTasks)")
 		}
-		c.mapTasks[workID].status = Success
-		c.mapTaskDoneNum += 1
+		if c.mapTasks[workID].status != Success {
+			c.mapTasks[workID].status = Success
+			c.mapTaskDoneNum += 1
+		}
 		if c.mapTaskDoneNum == len(c.mapTasks) {
 			c.mapTasksDone = true
 		}
@@ -111,8 +119,10 @@ func (c *Coordinator) NotifyComplete(args *WorkerArgs, reply *CoordinatorReply) 
 		if workID >= len(c.reduceTasks) {
 			log.Fatalf("workID >= len(c.reduceTasks)")
 		}
-		c.reduceTasks[workID].status = Success
-		c.reduceTaskDoneNum += 1
+		if c.reduceTasks[workID].status != Success {
+			c.reduceTasks[workID].status = Success
+			c.reduceTaskDoneNum += 1
+		}
 		if c.reduceTaskDoneNum == c.nReduce {
 			c.reduceTasksDone = true
 			c.allDone = true

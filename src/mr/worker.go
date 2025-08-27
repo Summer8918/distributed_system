@@ -43,11 +43,15 @@ func Worker(mapf func(string, string) []KeyValue,
 			// fmt.Println("Get reduce work id %v", reply.WorkId)
 			handleReduceTask(reducef, &reply)
 		case Exit:
+			fmt.Println("Worker exit 1")
 			os.Exit(0)
 		case Wait:
 			time.Sleep(1 * time.Second)
+		default:
+			time.Sleep(1 * time.Second)
 		}
 	}
+
 	// uncomment to send the Example RPC to the coordinator.
 	// CallExample()
 }
@@ -83,7 +87,10 @@ func handleReduceTask(reducef func(string, []string) string, reply *CoordinatorR
 
 	// Create output file
 	outFileName := fmt.Sprintf("mr-out-%d", reply.WorkId)
-	outFile, _ := os.CreateTemp("", outFileName)
+	tmpoutFile, err := os.CreateTemp("", fmt.Sprintf("mr-out-%d-*.tmp", reply.WorkId))
+	if err != nil {
+		log.Fatalln("Fail to CreateTemp")
+	}
 
 	// Apply reduce function
 	i := 0
@@ -96,12 +103,12 @@ func handleReduceTask(reducef func(string, []string) string, reply *CoordinatorR
 			j++
 		}
 		output := reducef(intermediate[i].Key, vals)
-		fmt.Fprintf(outFile, "%v %v\n", intermediate[i].Key, output)
+		fmt.Fprintf(tmpoutFile, "%v %v\n", intermediate[i].Key, output)
 		i = j
 	}
 
-	outFile.Close()
-	os.Rename(outFile.Name(), outFileName)
+	tmpoutFile.Close()
+	os.Rename(tmpoutFile.Name(), outFileName)
 
 	// Update reduce task status
 	NotifyComplete(reply)
@@ -121,42 +128,34 @@ func handleMapTask(mapf func(string, string) []KeyValue, reply *CoordinatorReply
 		log.Fatalf("cannot read %v", fileName)
 	}
 	file.Close()
+
 	kva := mapf(fileName, string(content))
+
 	writeIntermediate(reply.WorkId, reply.NReduce, kva)
 	NotifyComplete(reply)
 }
 
 func writeIntermediate(mapID int, nReduce int, kvs []KeyValue) error {
 	// Open one file and encoder per reduce bucket
-	files := make([]*os.File, nReduce)
-	encs := make([]*json.Encoder, nReduce)
-
-	// create tp files then atomatically rename at the end
-	for i := 0; i < nReduce; i++ {
-		name := fmt.Sprintf("mr-%d-%d", mapID, i)
-		f, err := os.Create(name)
-		if err != nil {
-			return fmt.Errorf("create %s: %w", name, err)
-		}
-		files[i] = f
-		encs[i] = json.NewEncoder(f)
-	}
-
-	// ensure files get closed
-	defer func() {
-		for _, f := range files {
-			if f != nil {
-				_ = f.Close()
-			}
-		}
-	}()
-
+	intermediate := make([][]KeyValue, nReduce)
 	// Dispatch each kv to its bucket and encode as a JSON line
 	for _, kv := range kvs {
 		r := ihash(kv.Key) % nReduce
-		if err := encs[r].Encode(&kv); err != nil {
-			return fmt.Errorf("encode kv to bucket %d: %w", r, err)
+		intermediate[r] = append(intermediate[r], kv)
+	}
+
+	for r, kva := range intermediate {
+		// To ensure that nobody observes partially written files in the presence of crashes
+		// Use a temporary file and atomatically renaming it once it is completely written
+		tmpoutputFileName := fmt.Sprintf("mr-%d-%d-x.tmp", mapID, r)
+		outputFileName := fmt.Sprintf("mr-%d-%d", mapID, r)
+		tmpofile, _ := os.CreateTemp("", tmpoutputFileName)
+		enc := json.NewEncoder(tmpofile)
+		for _, kv := range kva {
+			enc.Encode(&kv)
 		}
+		tmpofile.Close()
+		os.Rename(tmpofile.Name(), outputFileName)
 	}
 	return nil
 }
