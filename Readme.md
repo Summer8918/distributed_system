@@ -17,3 +17,7 @@ The worker are separate processes, starting workers by running the provided mrwo
 In Go's net/rpc, the server handles multiple RPCs concurrently. If two workers make RPC calls to the coordinator at the same time, the coordinator will process them in parallel goroutines.  
 
 ## Desgin
+
+
+# Lab 2: Key/ Value Server
+
