@@ -1,7 +1,12 @@
 package lock
 
 import (
-	"6.5840/kvtest1"
+	"fmt"
+	"math/rand"
+	"time"
+
+	"6.5840/kvsrv1/rpc"
+	kvtest "6.5840/kvtest1"
 )
 
 type Lock struct {
@@ -11,6 +16,9 @@ type Lock struct {
 	// MakeLock().
 	ck kvtest.IKVClerk
 	// You may add code here
+	lockClientName string
+	name           string
+	mytoken        string
 }
 
 // The tester calls MakeLock() and passes in a k/v clerk; your code can
@@ -21,13 +29,58 @@ type Lock struct {
 func MakeLock(ck kvtest.IKVClerk, l string) *Lock {
 	lk := &Lock{ck: ck}
 	// You may add code here
+	lk.lockClientName = kvtest.RandValue(8)
 	return lk
+}
+
+func (lk *Lock) makeToken() string {
+	return fmt.Sprintf("%s:%d", lk.lockClientName, time.Now().UnixNano())
+}
+
+func (lk *Lock) getRandomInt() int {
+	// Random int in [0, n)
+	x := rand.Int() % 10 // e.g. 0–9
+	return x
 }
 
 func (lk *Lock) Acquire() {
 	// Your code here
+	for {
+		v, ver, err := lk.ck.Get("lock/" + lk.name)
+		if !(err != rpc.ErrNoKey || (err == rpc.OK && v != "")) {
+			fmt.Println("Try to Acquire, err, v", err, v)
+			s := lk.getRandomInt()
+			time.Sleep(time.Duration(s) * time.Millisecond)
+			continue
+		}
+		tok := lk.makeToken()
+		lk.mytoken = tok
+		lk.ck.Put("lock/"+lk.name, tok, ver)
+		fmt.Println("Put lock")
+		v2, ver2, err := lk.ck.Get("lock/" + lk.name)
+		if err == rpc.OK && v2 == tok && ver == ver2-1 {
+			fmt.Println("Acquire Success")
+			return
+		}
+		s := lk.getRandomInt()
+		time.Sleep(time.Duration(s) * time.Millisecond)
+	}
 }
 
 func (lk *Lock) Release() {
 	// Your code here
+	for {
+		fmt.Println("Try to Release")
+		v, ver, err := lk.ck.Get("lock/" + lk.name)
+		fmt.Println("Try to Release err type:", err, v, lk.mytoken)
+		if err != rpc.OK {
+			fmt.Println("Try to Release err type:", err)
+			continue
+		}
+
+		if v == lk.mytoken {
+			lk.ck.Put("lock/"+lk.name, "", ver)
+			return
+		}
+	}
 }
