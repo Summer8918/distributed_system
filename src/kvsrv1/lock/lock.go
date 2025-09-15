@@ -55,7 +55,11 @@ func (lk *Lock) Acquire() {
 		}
 		tok := lk.makeToken()
 		lk.mytoken = tok
-		lk.ck.Put("lock/"+lk.name, tok, ver)
+
+		ok := lk.ck.Put("lock/"+lk.name, tok, ver)
+		if ok != rpc.OK && ok != rpc.ErrMaybe {
+			continue
+		}
 		// fmt.Println("Put lock")
 		v2, ver2, err := lk.ck.Get("lock/" + lk.name)
 		if err == rpc.OK && v2 == tok && ver == ver2-1 {
@@ -78,9 +82,14 @@ func (lk *Lock) Release() {
 		}
 
 		if v == lk.mytoken {
-			lk.ck.Put("lock/"+lk.name, "Empty", ver)
-			// fmt.Println("Release success. Try to Release err type:", err)
-			return
+			err := lk.ck.Put("lock/"+lk.name, "Empty", ver)
+			// fmt.Println("Try to Release err type:", err)
+			if err == rpc.OK || err == rpc.ErrMaybe {
+				// fmt.Println("Release success.")
+				return
+			} else {
+				continue
+			}
 		}
 	}
 }
