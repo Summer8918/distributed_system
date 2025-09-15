@@ -4,6 +4,7 @@ import (
 	"6.5840/kvsrv1/rpc"
 	kvtest "6.5840/kvtest1"
 	tester "6.5840/tester1"
+	"time"
 )
 
 type Clerk struct {
@@ -33,8 +34,13 @@ func (ck *Clerk) Get(key string) (string, rpc.Tversion, rpc.Err) {
 	args := rpc.GetArgs{Key: key}
 	reply := rpc.GetReply{}
 	ok := ck.clnt.Call(ck.server, "KVServer.Get", &args, &reply)
-	if ok {
-		return reply.Value, reply.Version, reply.Err
+	for true {
+		if ok {
+			return reply.Value, reply.Version, reply.Err
+		} else {
+			time.Sleep(100 * time.Millisecond)
+			ok = ck.clnt.Call(ck.server, "KVServer.Get", &args, &reply)
+		}
 	}
 	return "", 0, rpc.ErrNoKey
 }
@@ -62,8 +68,22 @@ func (ck *Clerk) Put(key, value string, version rpc.Tversion) rpc.Err {
 	reply := rpc.PutReply{}
 
 	ok := ck.clnt.Call(ck.server, "KVServer.Put", &args, &reply)
-	if ok {
-		return reply.Err
+	cnt := 1
+	for true {
+		if ok {
+			if reply.Err == rpc.ErrVersion {
+				if cnt == 1 {
+					return reply.Err
+				} else {
+					return rpc.ErrMaybe
+				}
+			}
+			return reply.Err
+		} else {
+			time.Sleep(100 * time.Millisecond)
+			ok = ck.clnt.Call(ck.server, "KVServer.Put", &args, &reply)
+			cnt += 1
+		}
 	}
 	return rpc.ErrNoKey
 }
