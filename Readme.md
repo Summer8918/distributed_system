@@ -21,3 +21,6 @@ In Go's net/rpc, the server handles multiple RPCs concurrently. If two workers m
 
 # Lab 2: Key/ Value Server
 
+
+# Lab 3: Raft
+A server can be in three states: candidate, follower and leader.  

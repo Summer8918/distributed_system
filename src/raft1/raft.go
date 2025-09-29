@@ -19,6 +19,18 @@ import (
 	"6.5840/tester1"
 )
 
+type logEntry struct {
+	// interface{} is the empty interface—a type that can hold a value of any concrete type.
+	cmd interface{}
+	term int
+	index int
+}
+
+const (
+	Candidate    = 0
+	Follower  = 1
+	Leader = 3
+)
 
 // A Go object implementing a single Raft peer.
 type Raft struct {
@@ -31,17 +43,37 @@ type Raft struct {
 	// Your data here (3A, 3B, 3C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
+	currentTerm int
+	currentState int
+	votedFor    int
+	log        []*logEntry
 
+	commitIndex int
+	lastApplied int
+	lastTimeReceiveAppendEntries time.Time
+	isLeader bool
+}
+
+
+// Get the index in log
+func (rf *Raft) getIndex(idx int) int {
+	return idx - rf.log[0].index
+}
+
+func (rf *Raft) getLogEntry(idx int) logEntry {
+	return rf.log[rf.getIndex(index)]
 }
 
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
 
-	var term int
-	var isleader bool
+	// var term int
+	// var isleader bool
 	// Your code here (3A).
-	return term, isleader
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.currentTerm, rf.currentTerm == Leader
 }
 
 // save Raft's persistent state to stable storage,
@@ -105,17 +137,64 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 // field names must start with capital letters!
 type RequestVoteArgs struct {
 	// Your data here (3A, 3B).
+	Term int
+	CandidateID int
+	LastLogIndex int
+	LastLogTerm int
 }
 
 // example RequestVote RPC reply structure.
 // field names must start with capital letters!
 type RequestVoteReply struct {
 	// Your data here (3A).
+	Term int
+	VoteGranted bool
 }
 
 // example RequestVote RPC handler.
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (3A, 3B).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	// Reply false if term < currentTerm
+	if args.Term < rf.currentTerm {
+		reply.Term = rf.currentTerm
+		reply.VoteGranted = false
+		return
+	}
+
+	// If votedFor is null or candidateId, and candidate’s log is at
+	// least as up-to-date as receiver’s log, grant vote
+	// The RPC includes information about the candidate’s log, and the
+	// voter denies its vote if its own log is more up-to-date than
+	// that of the candidate.
+	if args.Term > rf.currentTerm {
+		fr.state = Follower
+		rf.votedFor = -1
+		rf.currentTerm = args.Term
+	}
+
+	reply.Term = rf.currentTerm
+
+	n := len(rf.log)
+	if n > 0 {
+		serverLogTerm := rf.log[n - 1].term
+		serverLogIndex := rf.log[n-1].index
+		if args.LastLogTerm < serverLogTerm {
+			return
+		}
+		if args.LastLogTerm == serverLogTerm  && args.LastLogIndex < serverLogIndex {
+			return
+		}
+
+		if rf.votedFor == -1 || rf.votedFor == args.CandidateID {
+			rf.lastTimeReceiveAppendEntries = time.Now()
+			rf.votedFor = args.CandidateID
+			reply.VoteGranted = true
+		}
+	} else {
+		reply.VoteGranted = true
+	}
 }
 
 // example code to send a RequestVote RPC to a server.
@@ -198,12 +277,26 @@ func (rf *Raft) ticker() {
 
 		// Your code here (3A)
 		// Check if a leader election should be started.
-
+		// If a follower receives no communication over a period of time
+		// called the election timeout, then it assumes there is no viable
+		// leader and begins an election to choose a new leader.
+		electionTimeout := 250 + (rand.Int63() % 300)
 
 		// pause for a random amount of time between 50 and 350
 		// milliseconds.
-		ms := 50 + (rand.Int63() % 300)
-		time.Sleep(time.Duration(ms) * time.Millisecond)
+		rf.mu.Lock()
+		defer rf.mu.Unlock()
+		if time.Since(rf.lastTimeReceiveAppendEntries) < electionTimeout {
+			ms := 50 + (rand.Int63() % 300)
+			time.Sleep(time.Duration(ms) * time.Millisecond)
+			return
+		}
+		// Begin an election
+		for {
+			rf.currentTerm += 1
+			rf.votedFor = rf.me
+			
+		}
 	}
 }
 
