@@ -91,7 +91,7 @@ func (rf *Raft) GetState() (int, bool) {
 	// Your code here (3A).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	return rf.currentTerm, rf.currentTerm == Leader
+	return rf.currentTerm, rf.currentState == Leader
 }
 
 // save Raft's persistent state to stable storage,
@@ -148,7 +148,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 
 }
 
-// example RequestVote RPC arguments structure.
+// RequestVote RPC arguments structure.
 // field names must start with capital letters!
 type RequestVoteArgs struct {
 	// Your data here (3A, 3B).
@@ -158,7 +158,7 @@ type RequestVoteArgs struct {
 	LastLogTerm  int
 }
 
-// example RequestVote RPC reply structure.
+// RequestVote RPC reply structure.
 // field names must start with capital letters!
 type RequestVoteReply struct {
 	// Your data here (3A).
@@ -198,7 +198,6 @@ func (rf *Raft) sendToChannel(ch chan bool, value bool) {
 
 // step down to follower when getting higher term,
 // lock must be held before calling this.
-//
 func (rf *Raft) stepDownToFollower(term int) {
 	state := rf.currentState
 	rf.currentState = Follower
