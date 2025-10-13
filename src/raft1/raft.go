@@ -54,6 +54,7 @@ type Raft struct {
 	lastApplied                  int
 
 	// volatile state on leaders
+	// The index of the next log entry the leader will send to that follower.
 	nextIndex []int
 	matchIndex []int
 
@@ -196,7 +197,8 @@ func (rf *Raft) sendToChannel(ch chan bool, value bool) {
 	}
 }
 
-// step down to follower when getting higher term,
+// If a candidate or leader discovers that its term is out of date,
+// it immediately step down to follower.
 // lock must be held before calling this.
 func (rf *Raft) stepDownToFollower(term int) {
 	state := rf.currentState
@@ -229,6 +231,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	defer rf.mu.Unlock()
 
 	// Reply false if term < currentTerm
+	//If a server receives a request with a stale term number, it rejects the request.
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
@@ -247,6 +250,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	reply.Term = rf.currentTerm
 	reply.VoteGranted = false
 
+	// Raft use the voting process to prevent a candidate from winning an election unless
+	// its log contains all commited entries.
 	if (rf.votedFor < 0 || rf.votedFor == args.CandidateID) &&
 			rf.isLogUpToDate(args.LastLogIndex, args.LastLogTerm) {
 		reply.VoteGranted = true
@@ -290,12 +295,14 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
+	// discard stale replies
 	if rf.currentState != Candidate || args.Term != rf.currentTerm || reply.Term < rf.currentTerm {
 		return ok
 	}
 
+	// If the peer reports a higher term, step down to follower, and update term
 	if reply.Term > rf.currentTerm {
-		rf.stepDownToFollower(args.Term)
+		rf.stepDownToFollower(reply.Term)
 		return ok
 	}
 
@@ -309,7 +316,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	return ok
 }
 
-// broadcast RequestVote RPCs to all peers in parallel.
+// broadcast RequestVote RPCs to all peers in parallel for best performance.
 // lock must be held before calling this.
 func (rf *Raft) broadcastRequestVote() {
 	if rf.currentState != Candidate {
@@ -349,11 +356,13 @@ func (rf *Raft) applyLogs() {
 }
 
 
+
 // AppendEntries RPC handler
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
+	//If a server receives a request with a stale term number, it rejects the request.
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
 		reply.ConflictIndex = -1
@@ -362,13 +371,16 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 
-	if args.Term > rf.currentTerm {
+	// If the leader's term is at least as large as the candidate's current term, then
+	// the candidate recognizes the leader as legitimate and returns to follower state.
+	if args.Term >= rf.currentTerm {
 		rf.stepDownToFollower(args.Term)
 	}
 
 	lastIndex := rf.getLastIndex()
 	rf.sendToChannel(rf.heartbeatCh, true)
 
+	// Initialze reply
 	reply.Term = rf.currentTerm
 	reply.Success = false
 	reply.ConflictIndex = -1
@@ -381,8 +393,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	// log consistency check fails, i.e. different term at prevLogIndex
-	if cfTerm := rf.log[args.PrevLogIndex].Term; cfTerm != args.PrevLogIndex {
+	if cfTerm := rf.log[args.PrevLogIndex].Term; cfTerm != args.PrevLogTerm {
 		reply.ConflictTerm = cfTerm
+		// Move ConflictIndex to the first index whose term == cfTerm
 		for i := args.PrevLogIndex; i >= 0 && rf.log[i].Term == cfTerm; i-- {
 			reply.ConflictIndex = i
 		}
@@ -391,6 +404,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	// only truncate log if an existing entry conflicts with a new one
+	// PrevLogindex is the index of the entry immediately before the new entries a leader
+	// wants to follower to match/ append
 	i := args.PrevLogIndex + 1
 	j := 0
 	for ; i < lastIndex + 1 && j < len(args.Entries); i, j = i + 1, j + 1 {
@@ -399,8 +414,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		}
 	}
 
-	rf.log = rf.log[:i]
+	rf.log = rf.log[:i]  // drop any conflicting suffix
 	args.Entries = args.Entries[j:]
+	// skip over the already-matching prefix, append the remainder from the leader
 	rf.log = append(rf.log, args.Entries...)
 
 	reply.Success = true
@@ -414,6 +430,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			rf.commitIndex = lastIndex
 		}
 
+		// Apply newly committed entries to the state machine.
 		go rf.applyLogs()
 	}
 }
@@ -458,6 +475,8 @@ func (rf *Raft) convertToLeader() {
 	rf.nextIndex = make([]int, len(rf.peers))
 	rf.matchIndex = make([]int, len(rf.peers))
 	lastIndex := rf.getLastIndex() + 1
+	// When a leader first comes to power, it initializes all nextIndex values to the index just
+	// after the last one in its log
 	for i := range rf.peers {
 		rf.nextIndex[i] = lastIndex
 	}
@@ -481,18 +500,27 @@ func (rf *Raft) convertToCandidate(fromState int) {
 	defer rf.mu.Unlock()
 
 	// this check is needed to prevent race
-	// while waiting on multiple channels
+	// while follower waiting on multiple channels, those signals can arrive nearly simultaneously
+	// from different goroutines
+	// Suppose a follower times out and calls convertToCandidate(Follower). Before it grabs the lock, 
+	// an AppendEntries heartbeat might arrive and set/reset state; or another path already promoted it to Candidate.
+	// Without the check, it could apply a stale transition (e.g., flip to Candidate even though 
+	// a heartbeat just confirmed a leader), causing incorrect behavior.
 	if rf.currentState != fromState {
 		return
 	}
 
+	// To begin an election, a follower increments its current term and transitions to candidate state
 	rf.resetChannels()
 	rf.currentState = Candidate
 	rf.currentTerm++
+
+	// It then votes for itself
 	rf.votedFor = rf.me
 	rf.voteCount = 1
 	rf.persist()
 
+	// Issues RequestVots RPCs in parallel to each of the other servers in the cluster.
 	rf.broadcastRequestVote()
 }
 
@@ -536,6 +564,7 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 		return
 	}
 
+	// If leader discovers that its term is out of date, it immediately reverts to follower state.
 	if reply.Term > rf.currentTerm {
 		rf.stepDownToFollower(args.Term)
 		return
@@ -553,6 +582,8 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 		rf.nextIndex[server] = rf.matchIndex[server] + 1
 	} else if reply.ConflictTerm < 0 {
 		// follower's log shorter than leader's
+		// After a rejection, the leader update the nextIndex and reties the AppendEntries RPC
+		// Eventually nextIndex will reach a point where the leader and follower logs match.
 		rf.nextIndex[server] = reply.ConflictIndex
 		rf.matchIndex[server] = rf.nextIndex[server] - 1
 	} else {
@@ -607,6 +638,7 @@ func (rf *Raft) broadcastAppendEntries() {
 			args.LeaderId = rf.me
 			args.PrevLogIndex = rf.nextIndex[server] - 1
 			args.PrevLogTerm = rf.log[args.PrevLogIndex].Term
+			// highest idex leader knows to be committed.
 			args.LeaderCommit = rf.commitIndex
 			entries := rf.log[rf.nextIndex[server]:]
 			args.Entries = make([]LogEntry, len(entries))
@@ -622,6 +654,7 @@ func (rf *Raft) getElectionTimeout() time.Duration {
 	return time.Duration(360 + rand.Intn(240))
 }
 
+// drives Raft's timeouts and state transitions.
 func (rf *Raft) ticker() {
 	for rf.killed() == false {
 
@@ -635,10 +668,18 @@ func (rf *Raft) ticker() {
 		rf.mu.Unlock()
 		
 		switch state {
+		// A server remains in follower state as long as it receives valid RPCs from a leader or candidate.
 		case Follower:
+			// select lets a goroutine wait on multiple channel ops at once, whichever case can proceed first runs.
+			// When there is no default, the goroutine is parked by the runtime (it doestn't busy-wait or hold an 
+			// OS thread). It only blocks the goroutine, not the process or OS thread, other goroutines keep running.
 			select {
+			// valid vote request from candidate
 			case <-rf.grantVoteCh:
+			// heartbeats from leaders
 			case <-rf.heartbeatCh:
+			// If follower receives no communication over election timeout, it begins an election
+			// to choose a new leader
 			case <-time.After(rf.getElectionTimeout() * time.Millisecond):
 				rf.convertToCandidate(Follower)
 			}
@@ -648,6 +689,7 @@ func (rf *Raft) ticker() {
 				// state should already be follower
 			case <-rf.winElectCh:
 				rf.convertToLeader()
+			// election timeout, start a new election
 			case <-time.After(rf.getElectionTimeout() * time.Millisecond):
 				rf.convertToCandidate(Candidate)
 			}
@@ -656,9 +698,9 @@ func (rf *Raft) ticker() {
 			case <-rf.stepDownCh:
 			// state should already be follower
 			case <-time.After(120 * time.Millisecond):
-			rf.mu.Lock()
-			rf.broadcastAppendEntries()
-			rf.mu.Unlock()
+				rf.mu.Lock()
+				rf.broadcastAppendEntries()
+				rf.mu.Unlock()
 			}
 		}
 	}
@@ -683,6 +725,7 @@ func Make(peers []*labrpc.ClientEnd, me int, persister *tester.Persister, applyC
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
+	// When servers start up, they begin as followers.
 	rf.currentState = Follower
 	rf.currentTerm = 0
 	rf.votedFor = -1
