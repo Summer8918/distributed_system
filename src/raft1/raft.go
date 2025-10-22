@@ -454,7 +454,15 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	isLeader := true
 
 	// Your code here (3B).
-
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if (rf.currentState != Leader) {
+		isLeader = false
+		return index, term, isLeader
+	}
+	term = rf.currentTerm
+	rf.log = append(rf.log, LogEntry{term, command})
+	index = rf.getLastIndex()
 	return index, term, isLeader
 }
 
