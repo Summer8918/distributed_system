@@ -224,6 +224,7 @@ func (rf *Raft) stepDownToFollower(term int) {
 	if state != Follower {
 		rf.sendToChannel(rf.stepDownCh, true)
 	}
+	rf.persist()
 }
 
 // check if the candidate's log is at least as up-to-date as ours
@@ -243,7 +244,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (3A, 3B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	defer rf.persist()
 
 	// Reply false if term < currentTerm
 	//If a server receives a request with a stale term number, it rejects the request.
@@ -376,7 +376,6 @@ func (rf *Raft) applyLogs() {
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	defer rf.persist()
 
 	//If a server receives a request with a stale term number, it rejects the request.
 	if args.Term < rf.currentTerm {
@@ -584,7 +583,6 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	defer rf.persist()
 
 	if rf.currentState != Leader || args.Term != rf.currentTerm || reply.Term < rf.currentTerm {
 		return
