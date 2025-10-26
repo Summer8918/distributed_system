@@ -16,6 +16,8 @@ import (
 	//	"6.5840/labgob"
 	"6.5840/labrpc"
 	"6.5840/raftapi"
+	"6.5840/labgob"
+	"bytes"
 	tester "6.5840/tester1"
 )
 
@@ -102,15 +104,22 @@ func (rf *Raft) GetState() (int, bool) {
 // second argument to persister.Save().
 // after you've implemented snapshots, pass the current snapshot
 // (or nil if there's not yet a snapshot).
+// lock must be held before calling
 func (rf *Raft) persist() {
 	// Your code here (3C).
 	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
 	// e.Encode(rf.xxx)
 	// e.Encode(rf.yyy)
 	// raftstate := w.Bytes()
 	// rf.persister.Save(raftstate, nil)
+	if e.Encode(rf.currentTerm) != nil || e.Encode(rf.votedFor) != nil || e.Encode(rf.log) != nil {
+		panic("Fail to encode raft persistent state")
+	}
+
+	raftstate := w.Bytes()
+	rf.persister.Save(raftstate, nil)
 }
 
 // restore previously persisted state.
@@ -131,6 +140,11 @@ func (rf *Raft) readPersist(data []byte) {
 	//   rf.xxx = xxx
 	//   rf.yyy = yyy
 	// }
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	if d.Decode(&rf.currentTerm) != nil || d.Decode(&rf.votedFor) != nil || d.Decode(&rf.log) != nil {
+		panic("Fail to decode raft persistent state")
+	}
 }
 
 // how many bytes in Raft's persisted log?
@@ -229,6 +243,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (3A, 3B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	defer rf.persist()
 
 	// Reply false if term < currentTerm
 	//If a server receives a request with a stale term number, it rejects the request.
@@ -303,6 +318,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	// If the peer reports a higher term, step down to follower, and update term
 	if reply.Term > rf.currentTerm {
 		rf.stepDownToFollower(reply.Term)
+		rf.persist()
 		return ok
 	}
 
@@ -356,11 +372,11 @@ func (rf *Raft) applyLogs() {
 }
 
 
-
 // AppendEntries RPC handler
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	defer rf.persist()
 
 	//If a server receives a request with a stale term number, it rejects the request.
 	if args.Term < rf.currentTerm {
@@ -418,7 +434,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	args.Entries = args.Entries[j:]
 	// skip over the already-matching prefix, append the remainder from the leader
 	rf.log = append(rf.log, args.Entries...)
-
+	rf.persist()
 	reply.Success = true
 	
 	// update commit index to min(leaderCommit, lastIndex)
@@ -462,6 +478,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 	term = rf.currentTerm
 	rf.log = append(rf.log, LogEntry{term, command})
+	rf.persist()
 	index = rf.getLastIndex()
 	return index, term, isLeader
 }
@@ -567,6 +584,7 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	defer rf.persist()
 
 	if rf.currentState != Leader || args.Term != rf.currentTerm || reply.Term < rf.currentTerm {
 		return
@@ -734,6 +752,7 @@ func Make(peers []*labrpc.ClientEnd, me int, persister *tester.Persister, applyC
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 	// When servers start up, they begin as followers.
+
 	rf.currentState = Follower
 	rf.currentTerm = 0
 	rf.votedFor = -1
@@ -746,6 +765,9 @@ func Make(peers []*labrpc.ClientEnd, me int, persister *tester.Persister, applyC
 	rf.grantVoteCh = make(chan bool)
 	rf.heartbeatCh = make(chan bool)
 	rf.log = append(rf.log, LogEntry{Term: 0})
+
+	// initialize from state persisted before a crash
+	rf.readPersist(persister.ReadRaftState())
 
 	// start ticker goroutine to start elections
 	go rf.ticker()
